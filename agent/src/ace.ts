@@ -80,23 +80,35 @@ export async function generatePulseCard(project: string, _sentiment: number): Pr
     const res = await axios.post(
       `${BASE}/serp/google`,
       {
-        query: `${project} Solana crypto logo`,
+        query: `${project} Solana crypto`,
         number: 5,
         gl: "us",
         hl: "en",
-        tbm: "isch",
       },
       { headers: { Authorization: `Bearer ${KEY()}`, "Content-Type": "application/json" } }
     );
 
-    // SerpAPI image search returns images array
-    const images: any[] = res.data?.images ?? res.data?.image_results ?? res.data?.inline_images ?? [];
-    const url = images[0]?.original ?? images[0]?.thumbnail ?? images[0]?.link ?? "";
-    if (url) return url;
+    const data = res.data;
 
-    // Fallback: pull thumbnail from organic results
-    const organic: any[] = res.data?.organic ?? [];
-    return organic[0]?.thumbnail ?? "";
+    // Try knowledge graph image first
+    const kg = data?.knowledge_graph?.thumbnail ?? data?.knowledge_graph?.image ?? "";
+    if (kg) return kg;
+
+    // Try inline images from organic results
+    const images: any[] = data?.images ?? data?.inline_images ?? data?.image_results ?? [];
+    for (const img of images) {
+      const url = img?.original ?? img?.thumbnail ?? img?.link ?? "";
+      if (url?.startsWith("http")) return url;
+    }
+
+    // Try thumbnails on organic results
+    const organic: any[] = data?.organic ?? [];
+    for (const r of organic) {
+      const url = r?.thumbnail ?? r?.image ?? "";
+      if (url?.startsWith("http")) return url;
+    }
+
+    return "";
   } catch (e: any) {
     console.log(`        [img] image search failed (${e.response?.status ?? e.message})`);
     return "";

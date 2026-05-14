@@ -19,11 +19,15 @@ export async function setupSAP(): Promise<SAPContext> {
 
   const connection = new Connection(
     process.env.SYNAPSE_RPC_URL!,
-    "confirmed"
+    { commitment: "confirmed", fetchMiddleware: undefined, disableRetryOnRateLimit: true }
   );
 
-  // Verify RPC is reachable
-  const slot = await connection.getSlot();
+  // Verify RPC is reachable with a 8s timeout
+  const slotPromise = connection.getSlot();
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("RPC timeout")), 8000)
+  );
+  const slot = await Promise.race([slotPromise, timeoutPromise]);
   console.log(`[SAP] Connected to Synapse RPC — slot ${slot}`);
 
   return {
