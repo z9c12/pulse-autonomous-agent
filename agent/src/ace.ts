@@ -87,16 +87,20 @@ export async function generatePulseCard(project: string, brief: string): Promise
   }).catch(() => {});
 
   // Fetch project logo from CoinGecko (free, no key needed)
-  try {
-    const query = encodeURIComponent(project.toLowerCase().replace(/\s+/g, "-"));
-    const res = await axios.get(
-      `https://api.coingecko.com/api/v3/search?query=${query}`,
-      { timeout: 6000 }
-    );
-    const coin = res.data?.coins?.[0];
-    if (coin?.large) return coin.large;
-    if (coin?.thumb) return coin.thumb;
-  } catch {}
+  // Try progressively shorter versions of the name
+  const suffixes = /\s+(Exchange|Finance|Protocol|DEX|Network|Markets|Labs|DAO|App|Platform)$/i;
+  const queries = [project, project.replace(suffixes, ""), project.split(" ")[0]];
+  for (const q of [...new Set(queries)]) {
+    try {
+      const res = await axios.get(
+        `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`,
+        { timeout: 6000 }
+      );
+      const coin = res.data?.coins?.[0];
+      if (coin?.large) return coin.large;
+      if (coin?.thumb) return coin.thumb;
+    } catch {}
+  }
 
   return "";
 }
