@@ -19,7 +19,7 @@ async function main() {
     console.log("[Boot] Discovering tools on SAP network...");
     await discoverTools(sapCtx);
   } catch (err) {
-    console.warn(`[Boot] SAP unavailable — running without on-chain memos: ${(err as Error).message.slice(0, 80)}`);
+    console.warn(`[Boot] SAP unavailable — on-chain memos skipped: ${(err as Error).message.slice(0, 60)}`);
   }
 
   // 3. Load Solana project list
@@ -38,7 +38,7 @@ async function main() {
     cycleCount++;
     const project = getNextProject();
     try {
-      await runPipeline(project, sapCtx as any, cycleCount);
+      await runPipeline(project, sapCtx, cycleCount);
     } catch (err) {
       console.error(`[Pipeline] Error on "${project}":`, (err as Error).message);
     }

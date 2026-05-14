@@ -181,7 +181,7 @@ export async function logCycleOnChain(
       agent: "Pulse",
       cycle: cycleCount,
       project,
-      services: ["serp", "chat", "dalle"],
+      services: ["serp", "chat", "embeddings"],
       ts: Date.now(),
     });
 
