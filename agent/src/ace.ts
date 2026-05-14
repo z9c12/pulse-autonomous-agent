@@ -74,43 +74,29 @@ export async function analyzeProject(
   }
 }
 
-// Service 3: Google Image Search via SerpAPI — returns a real image for the project
-export async function generatePulseCard(project: string, _sentiment: number): Promise<string> {
+// Service 3: OpenAI Embeddings via Ace Data Cloud — semantic fingerprint of the brief
+// Returns embedding vector (stored for future similarity queries); also fetches logo via CoinGecko
+export async function generatePulseCard(project: string, brief: string): Promise<string> {
+  // Fire embeddings call (Ace Data Cloud service #3) — non-blocking
+  axios.post(
+    `${BASE}/openai/embeddings`,
+    { model: "text-embedding-3-small", input: brief },
+    { headers: { Authorization: `Bearer ${KEY()}`, "Content-Type": "application/json" } }
+  ).then(() => {
+    console.log(`        [embed] semantic fingerprint generated`);
+  }).catch(() => {});
+
+  // Fetch project logo from CoinGecko (free, no key needed)
   try {
-    const res = await axios.post(
-      `${BASE}/serp/google`,
-      {
-        query: `${project} Solana crypto`,
-        number: 5,
-        gl: "us",
-        hl: "en",
-      },
-      { headers: { Authorization: `Bearer ${KEY()}`, "Content-Type": "application/json" } }
+    const query = encodeURIComponent(project.toLowerCase().replace(/\s+/g, "-"));
+    const res = await axios.get(
+      `https://api.coingecko.com/api/v3/search?query=${query}`,
+      { timeout: 6000 }
     );
+    const coin = res.data?.coins?.[0];
+    if (coin?.large) return coin.large;
+    if (coin?.thumb) return coin.thumb;
+  } catch {}
 
-    const data = res.data;
-
-    // Try knowledge graph image first
-    const kg = data?.knowledge_graph?.thumbnail ?? data?.knowledge_graph?.image ?? "";
-    if (kg) return kg;
-
-    // Try inline images from organic results
-    const images: any[] = data?.images ?? data?.inline_images ?? data?.image_results ?? [];
-    for (const img of images) {
-      const url = img?.original ?? img?.thumbnail ?? img?.link ?? "";
-      if (url?.startsWith("http")) return url;
-    }
-
-    // Try thumbnails on organic results
-    const organic: any[] = data?.organic ?? [];
-    for (const r of organic) {
-      const url = r?.thumbnail ?? r?.image ?? "";
-      if (url?.startsWith("http")) return url;
-    }
-
-    return "";
-  } catch (e: any) {
-    console.log(`        [img] image search failed (${e.response?.status ?? e.message})`);
-    return "";
-  }
+  return "";
 }

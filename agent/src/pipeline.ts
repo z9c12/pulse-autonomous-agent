@@ -20,10 +20,10 @@ export async function runPipeline(
   const { brief, score } = await analyzeProject(project, summary);
   console.log(`        Score: ${score}/10 | ${brief.slice(0, 80)}...`);
 
-  // Step 3 — SerpAPI Images: fetch visual pulse card
-  console.log(`  [3/3] Image search: fetching project image...`);
-  const imageUrl = await generatePulseCard(project, score);
-  console.log(`        Image ready: ${imageUrl.slice(0, 60)}...`);
+  // Step 3 — Embeddings (Ace Data Cloud) + CoinGecko logo
+  console.log(`  [3/3] Embeddings + logo fetch...`);
+  const imageUrl = await generatePulseCard(project, brief);
+  console.log(`        Image: ${imageUrl ? imageUrl.slice(0, 60) : "none"}`);
 
   // Save to Supabase
   const sapTx = sapCtx ? await logCycleOnChain(sapCtx, project, cycleCount) : null;

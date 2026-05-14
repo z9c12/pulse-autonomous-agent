@@ -140,7 +140,7 @@ export default function Home() {
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-pink-500"></span>
-            SerpAPI Images — project card
+            Embeddings — semantic fingerprint
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-green-500"></span>
