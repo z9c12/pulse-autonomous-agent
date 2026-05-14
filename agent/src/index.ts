@@ -10,16 +10,17 @@ async function main() {
   console.log("=== PULSE — Autonomous Solana Ecosystem Monitor ===");
   console.log(`Interval: ${INTERVAL_MS / 1000}s per project\n`);
 
-  // 1. Connect to SAP (Synapse RPC)
-  console.log("[Boot] Connecting to Synapse Agent Protocol...");
-  const sapCtx = await setupSAP();
-
-  // 2. Register agent on SAP mainnet (idempotent)
-  await registerAgentOnSAP(sapCtx);
-
-  // 3. Discover tools via SAP
-  console.log("[Boot] Discovering tools on SAP network...");
-  await discoverTools(sapCtx);
+  // 1. Connect to SAP (Synapse RPC) — non-fatal if unreachable
+  let sapCtx = null;
+  try {
+    console.log("[Boot] Connecting to Synapse Agent Protocol...");
+    sapCtx = await setupSAP();
+    await registerAgentOnSAP(sapCtx);
+    console.log("[Boot] Discovering tools on SAP network...");
+    await discoverTools(sapCtx);
+  } catch (err) {
+    console.warn(`[Boot] SAP unavailable — running without on-chain memos: ${(err as Error).message.slice(0, 80)}`);
+  }
 
   // 3. Load Solana project list
   console.log("[Boot] Loading Solana project list from DeFiLlama...");
@@ -37,7 +38,7 @@ async function main() {
     cycleCount++;
     const project = getNextProject();
     try {
-      await runPipeline(project, sapCtx, cycleCount);
+      await runPipeline(project, sapCtx as any, cycleCount);
     } catch (err) {
       console.error(`[Pipeline] Error on "${project}":`, (err as Error).message);
     }

@@ -4,7 +4,7 @@ import { logCycleOnChain, SAPContext } from "./sap";
 
 export async function runPipeline(
   project: string,
-  sapCtx: SAPContext,
+  sapCtx: SAPContext | null,
   cycleCount: number
 ): Promise<void> {
   console.log(`\n[Pipeline #${cycleCount}] Processing: ${project}`);
@@ -26,7 +26,7 @@ export async function runPipeline(
   console.log(`        Image ready: ${imageUrl.slice(0, 60)}...`);
 
   // Save to Supabase
-  const sapTx = await logCycleOnChain(sapCtx, project, cycleCount);
+  const sapTx = sapCtx ? await logCycleOnChain(sapCtx, project, cycleCount) : null;
 
   await savePulse({
     project,
