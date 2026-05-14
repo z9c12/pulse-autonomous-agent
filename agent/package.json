@@ -1,0 +1,31 @@
+{
+  "name": "pulse-agent",
+  "version": "1.0.0",
+  "description": "Autonomous Solana ecosystem monitor — discovers tools via SAP, runs AI pipeline via Ace Data Cloud",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@acedatacloud/sdk": "latest",
+    "@acedatacloud/x402-client": "latest",
+    "@coral-xyz/anchor": "^0.30.0",
+    "@oobe-protocol-labs/synapse-client-sdk": "latest",
+    "@oobe-protocol-labs/synapse-sap-sdk": "latest",
+    "@solana/web3.js": "^1.90.0",
+    "@supabase/supabase-js": "^2.0.0",
+    "axios": "^1.6.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.0.0",
+    "node-cron": "^3.0.0",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,35 @@
+# ── Dependencies ──────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Environment / Secrets ─────────────────────────────────
+.env
+.env.local
+.env.*.local
+agent/.env
+dashboard/.env.local
+
+# ── Wallet / Key files ────────────────────────────────────
+*wallet*.json
+*secret*.json
+*keypair*.json
+*private*.json
+
+# ── Build outputs ─────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ── TypeScript ────────────────────────────────────────────
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Logs ──────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── OS / Editor ───────────────────────────────────────────
+.DS_Store
+.claude/
