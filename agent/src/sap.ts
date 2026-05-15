@@ -190,22 +190,53 @@ function makeWallet(ctx: SAPContext) {
   };
 }
 
-/** SapClient wired to the Synapse RPC so all calls appear in the dashboard. */
+const FALLBACK_RPC = "https://api.mainnet-beta.solana.com";
+
+/**
+ * SapClient uses Synapse RPC so blockhash fetches appear in the dashboard.
+ * If SYNAPSE_RPC_URL is unreachable from Railway, buildTransaction falls back
+ * to the public mainnet RPC so transactions still land on-chain.
+ */
 function makeSapClient(ctx: SAPContext) {
   return createSapClient(process.env.SYNAPSE_RPC_URL!, makeWallet(ctx) as any);
 }
 
-/** Build a VersionedTransaction, sign it, and send via Synapse RPC.
- *  SapClient.sendTransaction() is broken for VersionedTx in web3.js 1.98 —
- *  it passes signers as the second arg but the overload expects options. */
+/** Reliable read — tries Synapse RPC first, falls back to public mainnet. */
+async function getAccountInfoReliable(
+  ctx: SAPContext,
+  pubkey: PublicKey
+): Promise<import("@solana/web3.js").AccountInfo<Buffer> | null> {
+  try {
+    return await ctx.connection.getAccountInfo(pubkey);
+  } catch {
+    const fallback = new Connection(FALLBACK_RPC, "confirmed");
+    return await fallback.getAccountInfo(pubkey);
+  }
+}
+
+/** Build a VersionedTransaction, sign it, and send.
+ *  Tries Synapse RPC for buildTransaction (shows in dashboard), falls back
+ *  to public RPC for sendRawTransaction if Synapse is unreachable. */
 async function buildSignSend(
   ctx: SAPContext,
   ix: TransactionInstruction
 ): Promise<string> {
-  const sapClient = makeSapClient(ctx);
-  const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+  let vTx;
+  try {
+    const sapClient = makeSapClient(ctx);
+    vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+  } catch {
+    // Synapse RPC unreachable from this region — use public RPC for blockhash
+    const fallbackClient = createSapClient(FALLBACK_RPC, makeWallet(ctx) as any);
+    vTx = await fallbackClient.buildTransaction([ix], ctx.keypair.publicKey);
+  }
   vTx.sign([ctx.keypair]);
-  return await ctx.connection.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+  try {
+    return await ctx.connection.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+  } catch {
+    const fallback = new Connection(FALLBACK_RPC, "confirmed");
+    return await fallback.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+  }
 }
 
 /** Derive session PDA: ["sap_session", vault, SESSION_HASH] */
@@ -239,7 +270,7 @@ async function waitConfirm(ms = 4000) {
  */
 async function fetchOnChainSequence(ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
   try {
-    const info = await ctx.connection.getAccountInfo(sessionPDA);
+    const info = await getAccountInfoReliable(ctx, sessionPDA);
     if (!info || info.data.length < 77) {
       console.log(`  [SAP] fetchOnChainSequence: account missing or too short, using cached ${_vaultState?.sequence ?? 0}`);
       return _vaultState?.sequence ?? 0;
@@ -265,7 +296,7 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     const [globalPDA] = Pdas.getGlobalPDA();
 
     // Init vault if it doesn't exist
-    const vaultInfo = await ctx.connection.getAccountInfo(vaultPDA);
+    const vaultInfo = await getAccountInfoReliable(ctx, vaultPDA);
     if (!vaultInfo) {
       console.log("[SAP] Initializing memory vault...");
       const sapClient = makeSapClient(ctx);
@@ -283,7 +314,7 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     }
 
     // Open session if it doesn't exist
-    const sessionInfo = await ctx.connection.getAccountInfo(sessionPDA);
+    const sessionInfo = await getAccountInfoReliable(ctx, sessionPDA);
     let sequence = 0;
     if (!sessionInfo) {
       console.log("[SAP] Opening memory session...");
