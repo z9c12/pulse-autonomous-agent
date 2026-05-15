@@ -36,16 +36,9 @@ export async function setupSAP(): Promise<SAPContext> {
     { commitment: "confirmed", disableRetryOnRateLimit: true }
   );
 
-  const slotPromise = connection.getSlot();
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("RPC timeout")), 8000)
-  );
-  const slot = await Promise.race([slotPromise, timeoutPromise]);
-  console.log(`[SAP] Connected to Synapse RPC — slot ${slot}`);
-
+  console.log(`[SAP] SAP context ready — wallet: ${keypair.publicKey.toString()}`);
   return { connection, keypair, walletAddress: keypair.publicKey.toString() };
 }
-
 export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
   const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
 
