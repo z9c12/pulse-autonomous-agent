@@ -1,7 +1,25 @@
-import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, SystemProgram } from "@solana/web3.js";
-import { SapClient, PROGRAM_ID as SAP_PROGRAM_ID } from "@oobe-protocol-labs/synapse-sap-sdk";
-import { Pdas, Accounts } from "@oobe-protocol-labs/synapse-sap-sdk";
+import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, TransactionInstruction } from "@solana/web3.js";
+import { SapClient, Pdas, Accounts } from "@oobe-protocol-labs/synapse-sap-sdk";
 import bs58 from "bs58";
+
+function anchorWallet(keypair: Keypair) {
+  return {
+    publicKey: keypair.publicKey,
+    payer: keypair,
+    signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+      if (tx instanceof VersionedTransaction) tx.sign([keypair]);
+      else (tx as Transaction).partialSign(keypair);
+      return tx;
+    },
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
+      return txs.map((tx) => {
+        if (tx instanceof VersionedTransaction) tx.sign([keypair]);
+        else (tx as Transaction).partialSign(keypair);
+        return tx;
+      });
+    },
+  } as any;
+}
 
 // Synapse Sentinel — live reference agent on SAP mainnet
 const SYNAPSE_SENTINEL = "Ccr2yK3hLALU4p8oNRqrh4dGuvPJTth5KCLMio8cE1ph";
@@ -38,8 +56,7 @@ export async function setupSAP(): Promise<SAPContext> {
 }
 
 export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
-  const agentPDATuple = Pdas.getAgentPDA(ctx.keypair.publicKey);
-  const agentPDA = agentPDATuple[0];
+  const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
 
   // Idempotent — skip if already registered
   const existing = await ctx.connection.getAccountInfo(agentPDA);
@@ -52,81 +69,28 @@ export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
 
   const balance = await ctx.connection.getBalance(ctx.keypair.publicKey);
   if (balance < 5_000_000) {
-    console.warn(`[SAP] Low balance (${balance} lamports) — registration may need ~0.005 SOL`);
+    console.warn(`[SAP] Low balance (${balance} lamports) — registration needs ~0.01 SOL`);
   }
 
-  // Wrap Keypair in Anchor wallet interface
-  const anchorWallet = {
-    publicKey: ctx.keypair.publicKey,
-    payer: ctx.keypair,
-    signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
-      if (tx instanceof VersionedTransaction) {
-        tx.sign([ctx.keypair]);
-      } else {
-        (tx as Transaction).partialSign(ctx.keypair);
-      }
-      return tx;
-    },
-    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
-      return txs.map((tx) => {
-        if (tx instanceof VersionedTransaction) {
-          tx.sign([ctx.keypair]);
-        } else {
-          (tx as Transaction).partialSign(ctx.keypair);
-        }
-        return tx;
-      });
-    },
-  } as any;
-
-  const client = new SapClient({ connection: ctx.connection, wallet: anchorWallet });
-
-  // Derive all PDAs explicitly
-  const SAP_PUBKEY = new PublicKey(SAP_PROGRAM_ID);
-  const [agentStatsPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("sap_stats"), agentPDA.toBuffer()],
-    SAP_PUBKEY
-  );
-  const [globalRegistryPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("sap_global")],
-    SAP_PUBKEY
-  );
-
   try {
-    // Build the instruction via Anchor (handles serialization), then send manually
-    // — avoids Anchor's WebSocket-based confirmation which Synapse RPC doesn't support
-    const ix = await (client.program.methods as any)
-      .registerAgent(
-        "Pulse",
-        "Autonomous Solana ecosystem monitor powered by Ace Data Cloud + SAP",
-        [],           // capabilities
-        [],           // pricing tiers
-        ["x402"],     // protocols
-        null,         // agentId
-        null,         // agentUri
-        null,         // x402Endpoint
-      )
-      .accounts({
-        wallet: ctx.keypair.publicKey,
-        agent: agentPDA,
-        agentStats: agentStatsPDA,
-        globalRegistry: globalRegistryPDA,
-        systemProgram: SystemProgram.programId,
-      })
-      .instruction();
+    const client = new SapClient({
+      rpcUrl: process.env.SYNAPSE_RPC_URL!,
+      wallet: anchorWallet(ctx.keypair),
+      commitment: "confirmed",
+    });
 
-    const { blockhash } = await ctx.connection.getLatestBlockhash();
-    const tx = new Transaction();
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = ctx.keypair.publicKey;
-    tx.add(ix);
-    tx.sign(ctx.keypair);
+    const sig = await (client.agent as any).register({
+      name: "Pulse",
+      description: "Autonomous Solana ecosystem monitor powered by Ace Data Cloud + SAP",
+      capabilities: [
+        { id: "solana:monitor", protocolId: "x402", version: "1.0", description: null },
+      ],
+      pricing: [],
+      protocols: ["x402", "A2A"],
+    });
 
-    const sig = await ctx.connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
     console.log(`[SAP] Agent registered on-chain! tx: ${sig}`);
     console.log(`[SAP] Agent PDA: ${agentPDA.toString()}`);
-    // Brief wait so account is visible on next boot's idempotency check
-    await new Promise((r) => setTimeout(r, 4000));
   } catch (err: any) {
     console.error(`[SAP] Registration failed:`, err.message);
     if (err.logs) console.error(`[SAP] Logs:`, err.logs.join("\n"));
@@ -168,8 +132,6 @@ export async function logCycleOnChain(
   cycleCount: number
 ): Promise<string | null> {
   try {
-    const { Transaction, TransactionInstruction } = await import("@solana/web3.js");
-
     const balance = await ctx.connection.getBalance(ctx.keypair.publicKey);
     if (balance < 10_000) {
       console.warn(`  [SAP] Wallet needs SOL for fees (${balance} lamports) — fund: ${ctx.walletAddress}`);
