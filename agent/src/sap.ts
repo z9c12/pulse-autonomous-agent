@@ -176,12 +176,6 @@ export async function logCycleOnChain(
   cycleCount: number
 ): Promise<string | null> {
   try {
-    const balance = await ctx.connection.getBalance(ctx.keypair.publicKey);
-    if (balance < 10_000) {
-      console.warn(`  [SAP] Wallet needs SOL for fees (${balance} lamports) — fund: ${ctx.walletAddress}`);
-      return null;
-    }
-
     const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
     const memo = JSON.stringify({
       agent: "PulseNet",
