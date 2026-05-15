@@ -238,9 +238,8 @@ async function waitConfirm(ms = 4000) {
 async function fetchOnChainSequence(ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
   try {
     const sapClient = makeSapClient(ctx);
-    const s = await sapClient.fetchAccount<any>("SessionLedger", sessionPDA);
-    // Anchor deserializes Rust snake_case as camelCase in JS
-    return s?.sequenceCounter ?? s?.sequence_counter ?? 0;
+    const s = await (sapClient.vault as any).fetchSessionByPda(sessionPDA);
+    return (s as any)?.sequenceCounter ?? 0;
   } catch {
     return _vaultState?.sequence ?? 0;
   }
