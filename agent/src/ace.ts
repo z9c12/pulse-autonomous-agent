@@ -14,16 +14,23 @@ export interface PipelineResult {
 
 // Service 1: SerpAPI — web search
 export async function searchProject(project: string): Promise<{ summary: string; snippets: string[] }> {
-  const res = await axios.post(
-    `${BASE}/serp/google`,
-    {
-      query: `${project} Solana latest news 2026`,
-      number: 5,
-      gl: "us",
-      hl: "en",
-    },
-    { headers: { Authorization: `Bearer ${KEY()}`, "Content-Type": "application/json" } }
-  );
+  let res;
+  try {
+    res = await axios.post(
+      `${BASE}/serp/google`,
+      {
+        query: `${project} Solana latest news`,
+        num: 5,
+        gl: "us",
+        hl: "en",
+      },
+      { headers: { Authorization: `Bearer ${KEY()}`, "Content-Type": "application/json" } }
+    );
+  } catch (err: any) {
+    const body = err.response?.data;
+    console.error(`  [SerpAPI] ${err.response?.status} error:`, JSON.stringify(body).slice(0, 200));
+    throw err;
+  }
 
   const results: any[] = res.data?.organic ?? res.data?.results ?? [];
   const snippets = results.map((r: any) => `${r.title}: ${r.snippet ?? r.description ?? ""}`);
