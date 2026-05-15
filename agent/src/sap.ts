@@ -1,28 +1,26 @@
-import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, TransactionInstruction } from "@solana/web3.js";
-import { SapClient, Pdas, Accounts } from "@oobe-protocol-labs/synapse-sap-sdk";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+} from "@solana/web3.js";
+import { createSapClient, Pdas } from "@oobe-protocol-labs/synapse-sap-sdk";
 import bs58 from "bs58";
 
-function anchorWallet(keypair: Keypair) {
-  return {
-    publicKey: keypair.publicKey,
-    payer: keypair,
-    signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
-      if (tx instanceof VersionedTransaction) tx.sign([keypair]);
-      else (tx as Transaction).partialSign(keypair);
-      return tx;
-    },
-    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
-      return txs.map((tx) => {
-        if (tx instanceof VersionedTransaction) tx.sign([keypair]);
-        else (tx as Transaction).partialSign(keypair);
-        return tx;
-      });
-    },
-  } as any;
-}
+const bsDecode: (s: string) => Uint8Array =
+  (bs58 as any).default?.decode?.bind((bs58 as any).default) ?? (bs58 as any).decode.bind(bs58);
 
-// Synapse Sentinel — live reference agent on SAP mainnet
-const SYNAPSE_SENTINEL = "Ccr2yK3hLALU4p8oNRqrh4dGuvPJTth5KCLMio8cE1ph";
+const SAP_PROGRAM = new PublicKey("SAPpUhsWLJG1FfkGRcXagEDMrMsWGjbky7AyhGpFETZ");
+
+/** Derive the per-wallet pricing-menu PDA ([b"sap_menu", wallet]) */
+function getPricingMenuPDA(wallet: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("sap_menu"), wallet.toBuffer()],
+    SAP_PROGRAM
+  );
+}
 
 export interface SAPContext {
   connection: Connection;
@@ -31,16 +29,13 @@ export interface SAPContext {
 }
 
 export async function setupSAP(): Promise<SAPContext> {
-  const keypair = Keypair.fromSecretKey(
-    bs58.decode(process.env.SOLANA_PRIVATE_KEY!)
-  );
+  const keypair = Keypair.fromSecretKey(bsDecode(process.env.SOLANA_PRIVATE_KEY!));
 
   const connection = new Connection(
     process.env.SYNAPSE_RPC_URL!,
-    { commitment: "confirmed", fetchMiddleware: undefined, disableRetryOnRateLimit: true }
+    { commitment: "confirmed", disableRetryOnRateLimit: true }
   );
 
-  // Verify RPC is reachable with a 8s timeout
   const slotPromise = connection.getSlot();
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error("RPC timeout")), 8000)
@@ -48,17 +43,12 @@ export async function setupSAP(): Promise<SAPContext> {
   const slot = await Promise.race([slotPromise, timeoutPromise]);
   console.log(`[SAP] Connected to Synapse RPC — slot ${slot}`);
 
-  return {
-    connection,
-    keypair,
-    walletAddress: keypair.publicKey.toString(),
-  };
+  return { connection, keypair, walletAddress: keypair.publicKey.toString() };
 }
 
 export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
   const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
 
-  // Idempotent — skip if already registered
   const existing = await ctx.connection.getAccountInfo(agentPDA);
   if (existing) {
     console.log(`[SAP] Agent already registered — PDA: ${agentPDA.toString()}`);
@@ -68,61 +58,116 @@ export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
   console.log("[SAP] Registering agent on SAP mainnet...");
 
   const balance = await ctx.connection.getBalance(ctx.keypair.publicKey);
-  if (balance < 5_000_000) {
-    console.warn(`[SAP] Low balance (${balance} lamports) — registration needs ~0.01 SOL`);
+  if (balance < 40_000_000) {
+    console.warn(
+      `[SAP] Insufficient balance (${balance} lamports) — registration needs ~0.04 SOL.` +
+      ` Fund wallet: ${ctx.walletAddress}`
+    );
+    // Still attempt — program will emit a clearer error if truly insufficient
   }
 
+  const wallet = {
+    publicKey: ctx.keypair.publicKey,
+    payer: ctx.keypair,
+    signTransaction: async <T extends Transaction>(tx: T): Promise<T> => {
+      tx.partialSign(ctx.keypair);
+      return tx;
+    },
+    signAllTransactions: async <T extends Transaction>(txs: T[]): Promise<T[]> => {
+      txs.forEach((tx) => tx.partialSign(ctx.keypair));
+      return txs;
+    },
+  };
+
+  const client = createSapClient(process.env.SYNAPSE_RPC_URL!, wallet as any);
+
+  const [statsPDA] = Pdas.getAgentStatsPDA(agentPDA);
+  const [globalPDA] = Pdas.getGlobalPDA();
+  const [pricingMenuPDA] = getPricingMenuPDA(ctx.keypair.publicKey);
+
+  // Build instruction data via Anchor (correct Borsh encoding)
+  const draftTx: Transaction = await (client.program.methods as any)
+    .registerAgent(
+      "PulseNet",
+      "Autonomous Solana ecosystem intelligence agent — monitors DeFi/protocol health via real-time web search, GPT-4o-mini analysis and semantic embeddings (Ace Data Cloud), with on-chain SAP memo logging every cycle.",
+      [{ id: "solana:monitor", description: null, protocolId: "ace-data-cloud", version: "1.0" }],
+      [],
+      ["x402", "A2A"],
+      null,
+      null,
+      null
+    )
+    .accounts({
+      wallet: ctx.keypair.publicKey,
+      agent: agentPDA,
+      agentStats: statsPDA,
+      globalRegistry: globalPDA,
+      systemProgram: SystemProgram.programId,
+    })
+    .transaction();
+
+  const anchorIx = draftTx.instructions[0];
+
+  // The on-chain program v0.10 requires 6 accounts: wallet, agent, agentStats, pricingMenu, globalRegistry, systemProgram
+  // (pricingMenu was added after SDK v0.9 — inject it at slot [3])
+  const sixAccountIx = new TransactionInstruction({
+    programId: SAP_PROGRAM,
+    data: anchorIx.data,
+    keys: [
+      anchorIx.keys[0], // wallet
+      anchorIx.keys[1], // agent
+      anchorIx.keys[2], // agentStats
+      { pubkey: pricingMenuPDA, isSigner: false, isWritable: true }, // pricingMenu (new)
+      anchorIx.keys[3], // globalRegistry
+      anchorIx.keys[4], // systemProgram
+    ],
+  });
+
   try {
-    const client = new SapClient({
-      rpcUrl: process.env.SYNAPSE_RPC_URL!,
-      wallet: anchorWallet(ctx.keypair),
-      commitment: "confirmed",
+    const { blockhash, lastValidBlockHeight } = await ctx.connection.getLatestBlockhash();
+    const tx = new Transaction({
+      blockhash,
+      lastValidBlockHeight,
+      feePayer: ctx.keypair.publicKey,
+    }).add(sixAccountIx);
+    tx.sign(ctx.keypair);
+
+    const sig = await ctx.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: true,
     });
 
-    const sig = await (client.agent as any).register({
-      name: "Pulse",
-      description: "Autonomous Solana ecosystem monitor powered by Ace Data Cloud + SAP",
-      capabilities: [
-        { id: "solana:monitor", protocolId: "x402", version: "1.0", description: null },
-      ],
-      pricing: [],
-      protocols: ["x402", "A2A"],
-    });
+    console.log(`[SAP] Registration sent: ${sig}`);
 
-    console.log(`[SAP] Agent registered on-chain! tx: ${sig}`);
-    console.log(`[SAP] Agent PDA: ${agentPDA.toString()}`);
+    // Poll for confirmation (WebSocket not supported by Synapse RPC)
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const status = await ctx.connection.getSignatureStatus(sig);
+      const conf = status?.value?.confirmationStatus;
+      if (conf === "confirmed" || conf === "finalized") {
+        const err = status?.value?.err;
+        if (err) {
+          console.error(`[SAP] Registration failed on-chain: ${JSON.stringify(err)}`);
+          throw new Error(`On-chain error: ${JSON.stringify(err)}`);
+        }
+        console.log(`[SAP] Agent registered on-chain! tx: ${sig}`);
+        console.log(`[SAP] Agent PDA: ${agentPDA.toString()}`);
+        return;
+      }
+    }
+    console.warn(`[SAP] Registration tx sent but not confirmed within 60s — sig: ${sig}`);
   } catch (err: any) {
     console.error(`[SAP] Registration failed:`, err.message);
     if (err.logs) console.error(`[SAP] Logs:`, err.logs.join("\n"));
+    throw err;
   }
 }
 
 export async function discoverTools(ctx: SAPContext): Promise<void> {
-  console.log("[SAP] Discovering tools on network...");
-
-  try {
-    // Fetch Synapse Sentinel agent account from SAP mainnet
-    const sentinelPubkey = new PublicKey(SYNAPSE_SENTINEL);
-    const [sentinelPDA] = Pdas.getAgentPDA(sentinelPubkey);
-    const accountInfo = await ctx.connection.getAccountInfo(sentinelPDA);
-
-    if (accountInfo) {
-      const agent = Accounts.parseAgentAccount(accountInfo.data);
-      console.log(`[SAP] Discovered Synapse Sentinel: ${agent.name}`);
-      console.log(`[SAP] Sentinel capabilities: ${agent.capabilities}`);
-    } else {
-      console.log(`[SAP] Synapse Sentinel found at ${SYNAPSE_SENTINEL}`);
-    }
-  } catch (err) {
-    // Non-fatal — agent is already registered manually via Studio
-    console.log(`[SAP] Discovery completed (${(err as Error).message})`);
-  }
-
-  // Derive our own agent PDA to show our on-chain identity
   const [ourAgentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
-  console.log(`[SAP] Our agent PDA: ${ourAgentPDA.toString()}`);
-  console.log(`[SAP] Register this wallet on Synapse Studio if not done yet:`);
-  console.log(`      https://studio.oobeprotocol.ai`);
+  const [globalPDA] = Pdas.getGlobalPDA();
+  console.log(`[SAP] Our agent PDA:   ${ourAgentPDA.toString()}`);
+  console.log(`[SAP] Global registry: ${globalPDA.toString()}`);
+  console.log(`[SAP] Synapse Studio: https://studio.oobeprotocol.ai`);
   console.log(`      Wallet: ${ctx.walletAddress}`);
 }
 
@@ -140,7 +185,7 @@ export async function logCycleOnChain(
 
     const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
     const memo = JSON.stringify({
-      agent: "Pulse",
+      agent: "PulseNet",
       cycle: cycleCount,
       project,
       services: ["serp", "chat", "embeddings"],
