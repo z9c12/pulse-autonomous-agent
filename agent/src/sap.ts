@@ -234,6 +234,18 @@ async function waitConfirm(ms = 4000) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+/** Read the current sequence_counter from the on-chain SessionLedger. */
+async function fetchOnChainSequence(ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
+  try {
+    const sapClient = makeSapClient(ctx);
+    const s = await sapClient.fetchAccount<any>("SessionLedger", sessionPDA);
+    // Anchor deserializes Rust snake_case as camelCase in JS
+    return s?.sequenceCounter ?? s?.sequence_counter ?? 0;
+  } catch {
+    return _vaultState?.sequence ?? 0;
+  }
+}
+
 /**
  * One-time boot setup: init vault + open session if they don't exist.
  * Reads sequence_counter from on-chain session to resume correctly.
@@ -283,14 +295,8 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
       console.log(`[SAP] Session opened: ${sig.slice(0, 20)}...`);
       await waitConfirm();
     } else {
-      try {
-        const sapClient = makeSapClient(ctx);
-        const s = await sapClient.fetchAccount<any>("SessionLedger", sessionPDA);
-        sequence = s?.sequence_counter ?? 0;
-        console.log(`[SAP] Resuming at sequence ${sequence}`);
-      } catch {
-        sequence = 0;
-      }
+      sequence = await fetchOnChainSequence(ctx, sessionPDA);
+      console.log(`[SAP] Resuming at sequence ${sequence}`);
     }
 
     _vaultState = { vaultPDA, sessionPDA, sequence };
@@ -310,7 +316,12 @@ export async function logCycleOnChain(
 
   try {
     const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
-    const { vaultPDA, sessionPDA, sequence } = _vaultState;
+    const { vaultPDA, sessionPDA } = _vaultState;
+
+    // Always read fresh sequence from chain — avoids drift from failed/unconfirmed txs
+    const sequence = await fetchOnChainSequence(ctx, sessionPDA);
+    _vaultState.sequence = sequence;
+
     const epochIndex = Math.floor(sequence / INSCRIPTIONS_PER_EPOCH);
     const epochPagePDA = getEpochPagePDA(sessionPDA, epochIndex);
 
@@ -342,9 +353,9 @@ export async function logCycleOnChain(
 
     const sig = await buildSignSend(ctx, ix);
 
-    _vaultState.sequence++;
+    _vaultState.sequence = sequence + 1;
 
-    console.log(`  [SAP] InscribeMemory: ${sig.slice(0, 20)}...`);
+    console.log(`  [SAP] InscribeMemory seq=${sequence}: ${sig.slice(0, 20)}...`);
     return sig;
   } catch (err) {
     console.warn(`  [SAP] InscribeMemory failed: ${(err as Error).message.slice(0, 80)}`);
