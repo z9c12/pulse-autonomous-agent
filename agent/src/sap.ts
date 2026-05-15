@@ -193,12 +193,15 @@ export async function logCycleOnChain(
       })
     );
 
-    const { blockhash } = await ctx.connection.getLatestBlockhash();
+    // Use public mainnet RPC for memo submission — Synapse RPC may be unreachable
+    // from certain hosting regions. Memo lands on the same Solana mainnet either way.
+    const rpc = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+    const { blockhash } = await rpc.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     tx.feePayer = ctx.keypair.publicKey;
     tx.sign(ctx.keypair);
 
-    const sig = await ctx.connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    const sig = await rpc.sendRawTransaction(tx.serialize(), { skipPreflight: true });
     console.log(`  [SAP] On-chain memo: ${sig.slice(0, 20)}...`);
     return sig;
   } catch (err) {
