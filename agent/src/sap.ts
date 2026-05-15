@@ -234,13 +234,24 @@ async function waitConfirm(ms = 4000) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-/** Read the current sequence_counter from the on-chain SessionLedger. */
-async function fetchOnChainSequence(ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
+/**
+ * Read sequence_counter from raw SessionLedger account bytes.
+ * Layout (after 8-byte Anchor discriminator):
+ *   bump(1) + vault(32) + session_hash(32) = 65 bytes → sequence_counter at offset 73.
+ */
+async function fetchOnChainSequence(_ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
   try {
-    const sapClient = makeSapClient(ctx);
-    const s = await (sapClient.vault as any).fetchSessionByPda(sessionPDA);
-    return (s as any)?.sequenceCounter ?? 0;
-  } catch {
+    const rpc = new Connection(PUBLIC_RPC, "confirmed");
+    const info = await rpc.getAccountInfo(sessionPDA);
+    if (!info || info.data.length < 77) {
+      console.log(`  [SAP] fetchOnChainSequence: account missing or too short, using cached ${_vaultState?.sequence ?? 0}`);
+      return _vaultState?.sequence ?? 0;
+    }
+    const seq = info.data.readUInt32LE(73);
+    console.log(`  [SAP] fetchOnChainSequence: on-chain sequence_counter = ${seq}`);
+    return seq;
+  } catch (err) {
+    console.log(`  [SAP] fetchOnChainSequence error: ${(err as Error).message.slice(0, 60)}, using cached ${_vaultState?.sequence ?? 0}`);
     return _vaultState?.sequence ?? 0;
   }
 }
