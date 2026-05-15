@@ -1,64 +1,13 @@
 import axios from "axios";
-import { privateKeyToAccount } from "viem/accounts";
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { wrapAxiosWithPayment, x402Client } = require("@x402/axios") as any;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { ExactEvmScheme, toClientEvmSigner } = require("@x402/evm") as any;
+const aceApi = axios.create({
+  baseURL: "https://api.acedata.cloud",
+  headers: {
+    Authorization: `Bearer ${process.env.ACE_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+});
 
-const KEY = () => process.env.ACE_API_KEY!;
-const PLATFORM_TOKEN = () => process.env.ACE_PLATFORM_TOKEN;
-const EVM_KEY = () => process.env.EVM_PRIVATE_KEY as `0x${string}` | undefined;
-
-// Build axios instance — x402 when Platform Token + EVM key are set, else Bearer key
-function buildClient() {
-  const token = PLATFORM_TOKEN();
-  const evmKey = EVM_KEY();
-
-  if (token && evmKey) {
-    const account = privateKeyToAccount(evmKey);
-    const signer = toClientEvmSigner(account);
-    const client = new x402Client();
-    client.register(ExactEvmScheme, signer);
-
-    const instance = axios.create({
-      baseURL: "https://platform.acedata.cloud",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-    return { api: wrapAxiosWithPayment(instance, client), mode: "x402" };
-  }
-
-  // Fallback: standard Bearer API key
-  return {
-    api: axios.create({
-      baseURL: "https://api.acedata.cloud",
-      headers: {
-        Authorization: `Bearer ${KEY()}`,
-        "Content-Type": "application/json",
-      },
-    }),
-    mode: "apikey",
-  };
-}
-
-const { api: aceApi, mode: aceMode } = buildClient();
-if (aceMode === "x402") {
-  console.log("[Ace] x402 payment mode active (Base USDC via AceDataCloud facilitator)");
-} else {
-  console.log("[Ace] API key mode active");
-}
-
-export interface PipelineResult {
-  project: string;
-  searchSummary: string;
-  brief: string;
-  sentimentScore: number;
-  imageUrl: string;
-  searchSnippets: string[];
-}
 
 // Service 1: SerpAPI — web search
 export async function searchProject(project: string): Promise<{ summary: string; snippets: string[] }> {

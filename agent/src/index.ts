@@ -3,6 +3,7 @@ import { setupSAP, discoverTools, registerAgentOnSAP } from "./sap";
 import { loadProjects, getNextProject, getProjectCount } from "./projects";
 import { runPipeline } from "./pipeline";
 import { ensureTable } from "./db";
+import { startPaymentServer } from "./server";
 
 const INTERVAL_MS = Number(process.env.INTERVAL_MS ?? 120_000); // default 2 min
 
@@ -29,6 +30,9 @@ async function main() {
 
   // 4. Print Supabase table hint once
   await ensureTable();
+
+  // 5. Start x402 payment server — sells intelligence reports for 0.001 USDC
+  startPaymentServer();
 
   console.log("[Boot] Agent ready. Starting autonomous loop...\n");
 

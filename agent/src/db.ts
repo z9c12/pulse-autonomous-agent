@@ -27,6 +27,23 @@ export async function savePulse(card: PulseCard): Promise<void> {
   );
 }
 
+export async function getLatestPulses(limit = 10): Promise<PulseCard[]> {
+  const res = await axios.get(
+    `${supabaseUrl()}/rest/v1/pulses?order=created_at.desc&limit=${limit}`,
+    { headers: { apikey: serviceKey(), Authorization: `Bearer ${serviceKey()}` } }
+  );
+  return res.data as PulseCard[];
+}
+
+export async function getPulseForProject(project: string): Promise<PulseCard | null> {
+  const res = await axios.get(
+    `${supabaseUrl()}/rest/v1/pulses?project=ilike.${encodeURIComponent(project)}&order=created_at.desc&limit=1`,
+    { headers: { apikey: serviceKey(), Authorization: `Bearer ${serviceKey()}` } }
+  );
+  const rows = res.data as PulseCard[];
+  return rows[0] ?? null;
+}
+
 export async function ensureTable(): Promise<void> {
   // Verify connection works
   try {
