@@ -86,12 +86,17 @@ export default function Home() {
   const [pulses, setPulses] = useState<Pulse[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const fetchPulses = async () => {
+  const fetchPulses = async (p = page) => {
     try {
-      const res = await fetch("/api/pulses");
-      const data = await res.json();
-      setPulses(data);
+      const res = await fetch(`/api/pulses?page=${p}`);
+      const json = await res.json();
+      setPulses(json.data ?? []);
+      setTotal(json.total ?? 0);
       setLastRefresh(new Date().toLocaleTimeString());
     } catch {
       // silently retry on next interval
@@ -101,10 +106,15 @@ export default function Home() {
   };
 
   useEffect(() => {
-    fetchPulses();
-    const interval = setInterval(fetchPulses, 30_000);
+    setLoading(true);
+    fetchPulses(page);
+  }, [page]);
+
+  useEffect(() => {
+    if (page !== 1) return;
+    const interval = setInterval(() => fetchPulses(1), 30_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [page]);
 
   return (
     <main className="min-h-screen p-6 max-w-7xl mx-auto">
@@ -123,7 +133,7 @@ export default function Home() {
             </p>
           </div>
           <div className="text-right text-xs text-gray-600">
-            <div>{pulses.length} projects scanned</div>
+            <div>{total} pulses total</div>
             <div>{lastRefresh ? `Updated ${lastRefresh}` : ""}</div>
           </div>
         </div>
@@ -166,6 +176,29 @@ export default function Home() {
           {pulses.map((pulse) => (
             <PulseCard key={pulse.id} pulse={pulse} />
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-8">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="px-4 py-1.5 rounded-lg border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            ← Prev
+          </button>
+          <span className="text-sm text-gray-500">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="px-4 py-1.5 rounded-lg border border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Next →
+          </button>
         </div>
       )}
     </main>
