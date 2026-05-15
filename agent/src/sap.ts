@@ -194,6 +194,22 @@ function makeSapClient(ctx: SAPContext) {
   return createSapClient("https://api.mainnet-beta.solana.com", makeWallet(ctx) as any);
 }
 
+const PUBLIC_RPC = "https://api.mainnet-beta.solana.com";
+
+/** Build a VersionedTransaction, sign it, and send via raw RPC.
+ *  SapClient.sendTransaction() is broken for VersionedTx in web3.js 1.98 —
+ *  it passes signers as the second arg but the overload expects options. */
+async function buildSignSend(
+  ctx: SAPContext,
+  ix: TransactionInstruction
+): Promise<string> {
+  const sapClient = makeSapClient(ctx);
+  const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+  vTx.sign([ctx.keypair]);
+  const rpc = new Connection(PUBLIC_RPC, "confirmed");
+  return await rpc.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+}
+
 /** Derive session PDA: ["sap_session", vault, SESSION_HASH] */
 function getSessionPDA(vaultPDA: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
@@ -229,13 +245,13 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     const sessionPDA = getSessionPDA(vaultPDA);
     const [globalPDA] = Pdas.getGlobalPDA();
 
-    const rpc = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-    const sapClient = makeSapClient(ctx);
+    const rpc = new Connection(PUBLIC_RPC, "confirmed");
 
     // Init vault if it doesn't exist
     const vaultInfo = await rpc.getAccountInfo(vaultPDA);
     if (!vaultInfo) {
       console.log("[SAP] Initializing memory vault...");
+      const sapClient = makeSapClient(ctx);
       const ix = await sapClient.vault.initVault({
         signer: ctx.keypair,
         wallet: ctx.keypair.publicKey,
@@ -244,8 +260,7 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
         globalRegistry: globalPDA,
         vaultNonce: Array(32).fill(0) as number[],
       });
-      const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
-      const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+      const sig = await buildSignSend(ctx, ix);
       console.log(`[SAP] Vault initialized: ${sig.slice(0, 20)}...`);
       await waitConfirm();
     }
@@ -255,6 +270,7 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     let sequence = 0;
     if (!sessionInfo) {
       console.log("[SAP] Opening memory session...");
+      const sapClient = makeSapClient(ctx);
       const ix = await sapClient.session.openSession({
         signer: ctx.keypair,
         wallet: ctx.keypair.publicKey,
@@ -263,12 +279,12 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
         session: sessionPDA,
         sessionHash: SESSION_HASH,
       });
-      const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
-      const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+      const sig = await buildSignSend(ctx, ix);
       console.log(`[SAP] Session opened: ${sig.slice(0, 20)}...`);
       await waitConfirm();
     } else {
       try {
+        const sapClient = makeSapClient(ctx);
         const s = await sapClient.fetchAccount<any>("SessionLedger", sessionPDA);
         sequence = s?.sequence_counter ?? 0;
         console.log(`[SAP] Resuming at sequence ${sequence}`);
@@ -324,8 +340,7 @@ export async function logCycleOnChain(
       epochIndex,
     });
 
-    const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
-    const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+    const sig = await buildSignSend(ctx, ix);
 
     _vaultState.sequence++;
 
