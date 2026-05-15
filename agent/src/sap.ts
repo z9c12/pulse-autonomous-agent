@@ -170,42 +170,55 @@ export async function discoverTools(ctx: SAPContext): Promise<void> {
   console.log(`      Wallet: ${ctx.walletAddress}`);
 }
 
+const X402_ENDPOINT = "https://pulse-autonomous-agent-production.up.railway.app";
+
 export async function logCycleOnChain(
   ctx: SAPContext,
-  project: string,
-  cycleCount: number
+  _project: string,
+  _cycleCount: number
 ): Promise<string | null> {
   try {
-    const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-    const memo = JSON.stringify({
-      agent: "PulseNet",
-      cycle: cycleCount,
-      project,
-      services: ["serp", "chat", "embeddings"],
-      ts: Date.now(),
+    const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
+    const [pricingMenuPDA] = getPricingMenuPDA(agentPDA);
+
+    const wallet = {
+      publicKey: ctx.keypair.publicKey,
+      payer: ctx.keypair,
+      signTransaction: async <T extends Transaction>(tx: T): Promise<T> => {
+        tx.partialSign(ctx.keypair);
+        return tx;
+      },
+      signAllTransactions: async <T extends Transaction>(txs: T[]): Promise<T[]> => {
+        txs.forEach((tx) => tx.partialSign(ctx.keypair));
+        return txs;
+      },
+    };
+
+    // Use public mainnet RPC — Synapse RPC unreachable from Railway EU West.
+    // SAP program is on mainnet so tx appears on SAP Explorer as UpdateAgent.
+    const sapClient = createSapClient("https://api.mainnet-beta.solana.com", wallet as any);
+
+    const ix = await sapClient.agent.updateAgent({
+      signer: ctx.keypair,
+      wallet: ctx.keypair.publicKey,
+      agent: agentPDA,
+      pricingMenu: pricingMenuPDA,
+      name: null,
+      description: null,
+      capabilities: null,
+      pricing: null,
+      protocols: null,
+      agentId: null,
+      agentUri: null,
+      x402Endpoint: X402_ENDPOINT,
     });
 
-    const tx = new Transaction().add(
-      new TransactionInstruction({
-        keys: [{ pubkey: ctx.keypair.publicKey, isSigner: true, isWritable: false }],
-        programId: MEMO_PROGRAM,
-        data: Buffer.from(memo, "utf-8"),
-      })
-    );
-
-    // Use public mainnet RPC for memo submission — Synapse RPC may be unreachable
-    // from certain hosting regions. Memo lands on the same Solana mainnet either way.
-    const rpc = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-    const { blockhash } = await rpc.getLatestBlockhash();
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = ctx.keypair.publicKey;
-    tx.sign(ctx.keypair);
-
-    const sig = await rpc.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-    console.log(`  [SAP] On-chain memo: ${sig.slice(0, 20)}...`);
+    const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+    const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+    console.log(`  [SAP] UpdateAgent tx: ${sig.slice(0, 20)}...`);
     return sig;
   } catch (err) {
-    console.warn(`  [SAP] Memo skipped: ${(err as Error).message.slice(0, 80)}`);
+    console.warn(`  [SAP] On-chain update skipped: ${(err as Error).message.slice(0, 80)}`);
     return null;
   }
 }
