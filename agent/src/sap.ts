@@ -201,13 +201,23 @@ function makeSapClient(ctx: SAPContext) {
   return createSapClient(process.env.SYNAPSE_RPC_URL!, makeWallet(ctx) as any);
 }
 
-/** Reliable read — tries Synapse RPC first, falls back to public mainnet. */
+/** Race a promise against a timeout; throws 'timeout' if the deadline is exceeded. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), ms)
+    ),
+  ]);
+}
+
+/** Reliable read — tries Synapse RPC (5 s timeout), falls back to public mainnet. */
 async function getAccountInfoReliable(
   ctx: SAPContext,
   pubkey: PublicKey
 ): Promise<import("@solana/web3.js").AccountInfo<Buffer> | null> {
   try {
-    return await ctx.connection.getAccountInfo(pubkey);
+    return await withTimeout(ctx.connection.getAccountInfo(pubkey), 5_000);
   } catch {
     const fallback = new Connection(FALLBACK_RPC, "confirmed");
     return await fallback.getAccountInfo(pubkey);
@@ -216,7 +226,7 @@ async function getAccountInfoReliable(
 
 /** Build a VersionedTransaction, sign it, and send.
  *  Tries Synapse RPC for buildTransaction (shows in dashboard), falls back
- *  to public RPC for sendRawTransaction if Synapse is unreachable. */
+ *  to public RPC if Synapse is unreachable or times out. */
 async function buildSignSend(
   ctx: SAPContext,
   ix: TransactionInstruction
@@ -224,15 +234,17 @@ async function buildSignSend(
   let vTx;
   try {
     const sapClient = makeSapClient(ctx);
-    vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+    vTx = await withTimeout(sapClient.buildTransaction([ix], ctx.keypair.publicKey), 5_000);
   } catch {
-    // Synapse RPC unreachable from this region — use public RPC for blockhash
     const fallbackClient = createSapClient(FALLBACK_RPC, makeWallet(ctx) as any);
     vTx = await fallbackClient.buildTransaction([ix], ctx.keypair.publicKey);
   }
   vTx.sign([ctx.keypair]);
   try {
-    return await ctx.connection.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+    return await withTimeout(
+      ctx.connection.sendRawTransaction(vTx.serialize(), { skipPreflight: true }),
+      5_000
+    );
   } catch {
     const fallback = new Connection(FALLBACK_RPC, "confirmed");
     return await fallback.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
