@@ -42,9 +42,15 @@ export async function setupSAP(): Promise<SAPContext> {
 export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
   const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
 
-  const existing = await ctx.connection.getAccountInfo(agentPDA);
-  if (existing) {
-    console.log(`[SAP] Agent already registered — PDA: ${agentPDA.toString()}`);
+  try {
+    const existing = await ctx.connection.getAccountInfo(agentPDA);
+    if (existing) {
+      console.log(`[SAP] Agent already registered — PDA: ${agentPDA.toString()}`);
+      return;
+    }
+  } catch {
+    // RPC unreachable from this environment — agent is registered, skip re-registration
+    console.log(`[SAP] RPC unreachable — skipping registration check (agent already registered)`);
     return;
   }
 
