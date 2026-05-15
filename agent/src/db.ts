@@ -1,4 +1,5 @@
 import axios from "axios";
+import { logger } from "./logger";
 
 export interface PulseCard {
   project: string;
@@ -12,67 +13,52 @@ export interface PulseCard {
 const supabaseUrl = () => process.env.SUPABASE_URL!;
 const serviceKey  = () => process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_ANON_KEY!;
 
+function headers() {
+  return {
+    apikey: serviceKey(),
+    Authorization: `Bearer ${serviceKey()}`,
+    "Content-Type": "application/json",
+  };
+}
+
 export async function savePulse(card: PulseCard): Promise<void> {
   await axios.post(
     `${supabaseUrl()}/rest/v1/pulses`,
     card,
-    {
-      headers: {
-        apikey: serviceKey(),
-        Authorization: `Bearer ${serviceKey()}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-    }
+    { headers: { ...headers(), Prefer: "return=minimal" } }
   );
 }
 
 export async function getLatestPulses(limit = 10): Promise<PulseCard[]> {
+  const safe = Math.min(Math.max(1, limit), 100);
   const res = await axios.get(
-    `${supabaseUrl()}/rest/v1/pulses?order=created_at.desc&limit=${limit}`,
-    { headers: { apikey: serviceKey(), Authorization: `Bearer ${serviceKey()}` } }
+    `${supabaseUrl()}/rest/v1/pulses?order=created_at.desc&limit=${safe}`,
+    { headers: headers() }
   );
   return res.data as PulseCard[];
 }
 
 export async function getPulseForProject(project: string): Promise<PulseCard | null> {
+  // project is already validated by the caller; encode for URL safety
   const res = await axios.get(
     `${supabaseUrl()}/rest/v1/pulses?project=ilike.${encodeURIComponent(project)}&order=created_at.desc&limit=1`,
-    { headers: { apikey: serviceKey(), Authorization: `Bearer ${serviceKey()}` } }
+    { headers: headers() }
   );
   const rows = res.data as PulseCard[];
   return rows[0] ?? null;
 }
 
 export async function ensureTable(): Promise<void> {
-  // Verify connection works
   try {
-    await axios.get(`${supabaseUrl()}/rest/v1/pulses?limit=1`, {
-      headers: {
-        apikey: serviceKey(),
-        Authorization: `Bearer ${serviceKey()}`,
-      },
-    });
-    console.log("[DB] Supabase connected — pulses table ready\n");
+    await axios.get(`${supabaseUrl()}/rest/v1/pulses?limit=1`, { headers: headers() });
+    logger.info("[DB] Supabase connected — pulses table ready\n");
   } catch (err: any) {
-    if (err.response?.status === 404 || err.response?.data?.code === "42P01") {
-      console.error("[DB] ERROR: 'pulses' table not found. Create it in Supabase SQL Editor:");
-      console.error(`
-  create table pulses (
-    id bigserial primary key,
-    project text not null,
-    brief text,
-    sentiment_score int,
-    image_url text,
-    search_snippets jsonb,
-    sap_tx text,
-    created_at timestamptz default now()
-  );
-  alter table pulses enable row level security;
-  create policy "Public read" on pulses for select using (true);
-      `);
+    const status = err.response?.status;
+    const code   = err.response?.data?.code;
+    if (status === 404 || code === "42P01") {
+      logger.warn("[DB] 'pulses' table not found — create it in Supabase with the SQL in README");
     } else {
-      console.warn("[DB] Warning:", err.response?.data?.message ?? err.message);
+      logger.error("[DB] Connection check failed", err);
     }
   }
 }

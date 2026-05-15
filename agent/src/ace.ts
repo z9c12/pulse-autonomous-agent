@@ -1,4 +1,5 @@
 import axios from "axios";
+import { logger } from "./logger";
 
 const aceApi = axios.create({
   baseURL: "https://api.acedata.cloud",
@@ -7,7 +8,6 @@ const aceApi = axios.create({
     "Content-Type": "application/json",
   },
 });
-
 
 // Service 1: SerpAPI — web search
 export async function searchProject(project: string): Promise<{ summary: string; snippets: string[] }> {
@@ -20,8 +20,8 @@ export async function searchProject(project: string): Promise<{ summary: string;
       hl: "en",
     });
   } catch (err: any) {
-    const body = err.response?.data;
-    console.error(`  [SerpAPI] ${err.response?.status} error:`, JSON.stringify(body).slice(0, 200));
+    const status = err.response?.status ?? "network error";
+    logger.error(`[SerpAPI] request failed (status: ${status})`);
     throw err;
   }
 
@@ -70,8 +70,10 @@ export async function generatePulseCard(project: string, brief: string): Promise
     model: "text-embedding-3-small",
     input: brief,
   }).then(() => {
-    console.log(`        [embed] semantic fingerprint generated`);
-  }).catch(() => {});
+    logger.info(`        [embed] semantic fingerprint generated`);
+  }).catch((err: any) => {
+    logger.error("[embed] embedding request failed", err);
+  });
 
   // Fetch project logo from CoinGecko (fallback when DeFiLlama logo unavailable)
   const suffixes = /\s+(Exchange|Finance|Protocol|DEX|Network|Markets|Labs|DAO|App|Platform)$/i;
