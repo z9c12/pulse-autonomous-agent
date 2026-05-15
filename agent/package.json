@@ -16,10 +16,13 @@
     "@oobe-protocol-labs/synapse-sap-sdk": "^0.15.1",
     "@solana/web3.js": "^1.90.0",
     "@supabase/supabase-js": "^2.0.0",
+    "@x402/axios": "^2.12.0",
+    "@x402/evm": "^2.12.0",
     "axios": "^1.6.0",
     "bs58": "^6.0.0",
     "dotenv": "^16.0.0",
     "node-cron": "^3.0.0",
+    "viem": "^2.49.2",
     "ws": "^8.20.1"
   },
   "devDependencies": {
