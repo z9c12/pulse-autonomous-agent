@@ -190,13 +190,12 @@ function makeWallet(ctx: SAPContext) {
   };
 }
 
+/** SapClient wired to the Synapse RPC so all calls appear in the dashboard. */
 function makeSapClient(ctx: SAPContext) {
-  return createSapClient("https://api.mainnet-beta.solana.com", makeWallet(ctx) as any);
+  return createSapClient(process.env.SYNAPSE_RPC_URL!, makeWallet(ctx) as any);
 }
 
-const PUBLIC_RPC = "https://api.mainnet-beta.solana.com";
-
-/** Build a VersionedTransaction, sign it, and send via raw RPC.
+/** Build a VersionedTransaction, sign it, and send via Synapse RPC.
  *  SapClient.sendTransaction() is broken for VersionedTx in web3.js 1.98 —
  *  it passes signers as the second arg but the overload expects options. */
 async function buildSignSend(
@@ -206,8 +205,7 @@ async function buildSignSend(
   const sapClient = makeSapClient(ctx);
   const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
   vTx.sign([ctx.keypair]);
-  const rpc = new Connection(PUBLIC_RPC, "confirmed");
-  return await rpc.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
+  return await ctx.connection.sendRawTransaction(vTx.serialize(), { skipPreflight: true });
 }
 
 /** Derive session PDA: ["sap_session", vault, SESSION_HASH] */
@@ -239,10 +237,9 @@ async function waitConfirm(ms = 4000) {
  * Layout (after 8-byte Anchor discriminator):
  *   bump(1) + vault(32) + session_hash(32) = 65 bytes → sequence_counter at offset 73.
  */
-async function fetchOnChainSequence(_ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
+async function fetchOnChainSequence(ctx: SAPContext, sessionPDA: PublicKey): Promise<number> {
   try {
-    const rpc = new Connection(PUBLIC_RPC, "confirmed");
-    const info = await rpc.getAccountInfo(sessionPDA);
+    const info = await ctx.connection.getAccountInfo(sessionPDA);
     if (!info || info.data.length < 77) {
       console.log(`  [SAP] fetchOnChainSequence: account missing or too short, using cached ${_vaultState?.sequence ?? 0}`);
       return _vaultState?.sequence ?? 0;
@@ -267,10 +264,8 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     const sessionPDA = getSessionPDA(vaultPDA);
     const [globalPDA] = Pdas.getGlobalPDA();
 
-    const rpc = new Connection(PUBLIC_RPC, "confirmed");
-
     // Init vault if it doesn't exist
-    const vaultInfo = await rpc.getAccountInfo(vaultPDA);
+    const vaultInfo = await ctx.connection.getAccountInfo(vaultPDA);
     if (!vaultInfo) {
       console.log("[SAP] Initializing memory vault...");
       const sapClient = makeSapClient(ctx);
@@ -288,7 +283,7 @@ export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
     }
 
     // Open session if it doesn't exist
-    const sessionInfo = await rpc.getAccountInfo(sessionPDA);
+    const sessionInfo = await ctx.connection.getAccountInfo(sessionPDA);
     let sequence = 0;
     if (!sessionInfo) {
       console.log("[SAP] Opening memory session...");
