@@ -74,7 +74,7 @@ export function startPaymentServer(): void {
   );
 
   // Public health check — no payment required
-  app.get("/health", (_req, res) => {
+  const healthPayload = (_req: express.Request, res: express.Response) => {
     res.json({
       agent: "PulseNet",
       status: "running",
@@ -87,7 +87,9 @@ export function startPaymentServer(): void {
       network: NETWORK,
       facilitator: FACILITATOR_URL,
     });
-  });
+  };
+  app.get("/", healthPayload);
+  app.get("/health", healthPayload);
 
   // x402-gated routes
   app.use(
@@ -144,7 +146,7 @@ export function startPaymentServer(): void {
     res.status(404).json({ error: "Not found." });
   });
 
-  app.listen(port, () => {
+  app.listen(port, "0.0.0.0", () => {
     logger.info(`[x402] Payment server live on port ${port}`);
     logger.info(`[x402] Accepting 0.001 USDC (Base) — payTo: ${payTo}`);
     logger.info(`[x402] Facilitator: ${FACILITATOR_URL}`);
