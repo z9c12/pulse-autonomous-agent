@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import {
   Connection,
   Keypair,
@@ -65,20 +66,7 @@ export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
     // Still attempt — program will emit a clearer error if truly insufficient
   }
 
-  const wallet = {
-    publicKey: ctx.keypair.publicKey,
-    payer: ctx.keypair,
-    signTransaction: async <T extends Transaction>(tx: T): Promise<T> => {
-      tx.partialSign(ctx.keypair);
-      return tx;
-    },
-    signAllTransactions: async <T extends Transaction>(txs: T[]): Promise<T[]> => {
-      txs.forEach((tx) => tx.partialSign(ctx.keypair));
-      return txs;
-    },
-  };
-
-  const client = createSapClient(process.env.SYNAPSE_RPC_URL!, wallet as any);
+  const client = createSapClient(process.env.SYNAPSE_RPC_URL!, makeWallet(ctx) as any);
 
   const [statsPDA] = Pdas.getAgentStatsPDA(agentPDA);
   const [globalPDA] = Pdas.getGlobalPDA();
@@ -170,55 +158,181 @@ export async function discoverTools(ctx: SAPContext): Promise<void> {
   console.log(`      Wallet: ${ctx.walletAddress}`);
 }
 
-const X402_ENDPOINT = "https://pulse-autonomous-agent-production.up.railway.app";
+// ─── Memory Vault / InscribeMemory ──────────────────────────────────────────
+
+const INSCRIPTIONS_PER_EPOCH = 1000;
+
+// Fixed deterministic session hash — same agent always uses same session
+const SESSION_HASH: number[] = Array.from(
+  createHash("sha256").update("pulsenet-session-v1").digest()
+);
+
+export interface VaultState {
+  vaultPDA: PublicKey;
+  sessionPDA: PublicKey;
+  sequence: number;
+}
+
+let _vaultState: VaultState | null = null;
+
+function makeWallet(ctx: SAPContext) {
+  return {
+    publicKey: ctx.keypair.publicKey,
+    payer: ctx.keypair,
+    signTransaction: async <T extends Transaction>(tx: T): Promise<T> => {
+      tx.partialSign(ctx.keypair);
+      return tx;
+    },
+    signAllTransactions: async <T extends Transaction>(txs: T[]): Promise<T[]> => {
+      txs.forEach((tx) => tx.partialSign(ctx.keypair));
+      return txs;
+    },
+  };
+}
+
+function makeSapClient(ctx: SAPContext) {
+  return createSapClient("https://api.mainnet-beta.solana.com", makeWallet(ctx) as any);
+}
+
+/** Derive session PDA: ["sap_session", vault, SESSION_HASH] */
+function getSessionPDA(vaultPDA: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("sap_session"), vaultPDA.toBuffer(), Buffer.from(SESSION_HASH)],
+    SAP_PROGRAM
+  );
+  return pda;
+}
+
+/** Derive epoch page PDA: ["sap_epoch", session, epochIndex_le32] */
+function getEpochPagePDA(sessionPDA: PublicKey, epochIndex: number): PublicKey {
+  const epochBuf = Buffer.alloc(4);
+  epochBuf.writeUInt32LE(epochIndex, 0);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("sap_epoch"), sessionPDA.toBuffer(), epochBuf],
+    SAP_PROGRAM
+  );
+  return pda;
+}
+
+async function waitConfirm(ms = 4000) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * One-time boot setup: init vault + open session if they don't exist.
+ * Reads sequence_counter from on-chain session to resume correctly.
+ */
+export async function setupInscriptionVault(ctx: SAPContext): Promise<void> {
+  try {
+    const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
+    const [vaultPDA] = Pdas.getVaultPDA(agentPDA);
+    const sessionPDA = getSessionPDA(vaultPDA);
+    const [globalPDA] = Pdas.getGlobalPDA();
+
+    const rpc = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+    const sapClient = makeSapClient(ctx);
+
+    // Init vault if it doesn't exist
+    const vaultInfo = await rpc.getAccountInfo(vaultPDA);
+    if (!vaultInfo) {
+      console.log("[SAP] Initializing memory vault...");
+      const ix = await sapClient.vault.initVault({
+        signer: ctx.keypair,
+        wallet: ctx.keypair.publicKey,
+        agent: agentPDA,
+        vault: vaultPDA,
+        globalRegistry: globalPDA,
+        vaultNonce: Array(32).fill(0) as number[],
+      });
+      const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+      const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+      console.log(`[SAP] Vault initialized: ${sig.slice(0, 20)}...`);
+      await waitConfirm();
+    }
+
+    // Open session if it doesn't exist
+    const sessionInfo = await rpc.getAccountInfo(sessionPDA);
+    let sequence = 0;
+    if (!sessionInfo) {
+      console.log("[SAP] Opening memory session...");
+      const ix = await sapClient.session.openSession({
+        signer: ctx.keypair,
+        wallet: ctx.keypair.publicKey,
+        agent: agentPDA,
+        vault: vaultPDA,
+        session: sessionPDA,
+        sessionHash: SESSION_HASH,
+      });
+      const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
+      const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
+      console.log(`[SAP] Session opened: ${sig.slice(0, 20)}...`);
+      await waitConfirm();
+    } else {
+      try {
+        const s = await sapClient.fetchAccount<any>("SessionLedger", sessionPDA);
+        sequence = s?.sequence_counter ?? 0;
+        console.log(`[SAP] Resuming at sequence ${sequence}`);
+      } catch {
+        sequence = 0;
+      }
+    }
+
+    _vaultState = { vaultPDA, sessionPDA, sequence };
+    console.log(`[SAP] Memory vault ready — InscribeMemory active\n`);
+  } catch (err) {
+    console.warn(`[SAP] Vault setup failed (InscribeMemory disabled): ${(err as Error).message.slice(0, 120)}`);
+    _vaultState = null;
+  }
+}
 
 export async function logCycleOnChain(
   ctx: SAPContext,
-  _project: string,
-  _cycleCount: number
+  project: string,
+  cycleCount: number
 ): Promise<string | null> {
+  if (!_vaultState) return null;
+
   try {
     const [agentPDA] = Pdas.getAgentPDA(ctx.keypair.publicKey);
-    const [pricingMenuPDA] = getPricingMenuPDA(agentPDA);
+    const { vaultPDA, sessionPDA, sequence } = _vaultState;
+    const epochIndex = Math.floor(sequence / INSCRIPTIONS_PER_EPOCH);
+    const epochPagePDA = getEpochPagePDA(sessionPDA, epochIndex);
 
-    const wallet = {
-      publicKey: ctx.keypair.publicKey,
-      payer: ctx.keypair,
-      signTransaction: async <T extends Transaction>(tx: T): Promise<T> => {
-        tx.partialSign(ctx.keypair);
-        return tx;
-      },
-      signAllTransactions: async <T extends Transaction>(txs: T[]): Promise<T[]> => {
-        txs.forEach((tx) => tx.partialSign(ctx.keypair));
-        return txs;
-      },
-    };
+    const dataBytes = Buffer.from(
+      JSON.stringify({ agent: "PulseNet", cycle: cycleCount, project, ts: Date.now() }),
+      "utf-8"
+    ).slice(0, 750); // MAX_INSCRIPTION_SIZE
 
-    // Use public mainnet RPC — Synapse RPC unreachable from Railway EU West.
-    // SAP program is on mainnet so tx appears on SAP Explorer as UpdateAgent.
-    const sapClient = createSapClient("https://api.mainnet-beta.solana.com", wallet as any);
+    const contentHash = Array.from(createHash("sha256").update(dataBytes).digest()) as number[];
+    const nonce = Array(12).fill(0) as number[];
 
-    const ix = await sapClient.agent.updateAgent({
+    const sapClient = makeSapClient(ctx);
+    const ix = await sapClient.vault.inscribeMemory({
       signer: ctx.keypair,
       wallet: ctx.keypair.publicKey,
       agent: agentPDA,
-      pricingMenu: pricingMenuPDA,
-      name: null,
-      description: null,
-      capabilities: null,
-      pricing: null,
-      protocols: null,
-      agentId: null,
-      agentUri: null,
-      x402Endpoint: X402_ENDPOINT,
+      vault: vaultPDA,
+      session: sessionPDA,
+      epochPage: epochPagePDA,
+      sequence,
+      encryptedData: dataBytes,
+      nonce,
+      contentHash,
+      totalFragments: 1,
+      fragmentIndex: 0,
+      compression: 0,
+      epochIndex,
     });
 
     const vTx = await sapClient.buildTransaction([ix], ctx.keypair.publicKey);
     const sig = await sapClient.sendTransaction(vTx, [ctx.keypair]);
-    console.log(`  [SAP] UpdateAgent tx: ${sig.slice(0, 20)}...`);
+
+    _vaultState.sequence++;
+
+    console.log(`  [SAP] InscribeMemory: ${sig.slice(0, 20)}...`);
     return sig;
   } catch (err) {
-    console.warn(`  [SAP] On-chain update skipped: ${(err as Error).message.slice(0, 80)}`);
+    console.warn(`  [SAP] InscribeMemory failed: ${(err as Error).message.slice(0, 80)}`);
     return null;
   }
 }

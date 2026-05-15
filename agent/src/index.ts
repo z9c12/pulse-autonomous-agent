@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { setupSAP, discoverTools, registerAgentOnSAP } from "./sap";
+import { setupSAP, discoverTools, registerAgentOnSAP, setupInscriptionVault } from "./sap";
 import { loadProjects, getNextProject, getProjectCount } from "./projects";
 import { runPipeline } from "./pipeline";
 import { ensureTable } from "./db";
@@ -19,6 +19,8 @@ async function main() {
     await registerAgentOnSAP(sapCtx);
     console.log("[Boot] Discovering tools on SAP network...");
     await discoverTools(sapCtx);
+    console.log("[Boot] Setting up memory vault for InscribeMemory...");
+    await setupInscriptionVault(sapCtx);
   } catch (err) {
     console.warn(`[Boot] SAP unavailable — on-chain memos skipped: ${(err as Error).message.slice(0, 200)}`);
   }
