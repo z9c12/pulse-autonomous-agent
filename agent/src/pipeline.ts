@@ -1,6 +1,7 @@
 import { searchProject, analyzeProject, generatePulseCard } from "./ace";
 import { savePulse } from "./db";
 import { logCycleOnChain, SAPContext } from "./sap";
+import { getProjectLogo } from "./projects";
 
 export async function runPipeline(
   project: string,
@@ -20,9 +21,10 @@ export async function runPipeline(
   const { brief, score } = await analyzeProject(project, summary);
   console.log(`        Score: ${score}/10 | ${brief.slice(0, 80)}...`);
 
-  // Step 3 — Embeddings (Ace Data Cloud) + CoinGecko logo
+  // Step 3 — Embeddings (Ace Data Cloud) + logo (DeFiLlama → CoinGecko fallback)
   console.log(`  [3/3] Embeddings + logo fetch...`);
-  const imageUrl = await generatePulseCard(project, brief);
+  const llamaLogo = getProjectLogo(project);
+  const imageUrl = llamaLogo || await generatePulseCard(project, brief);
   console.log(`        Image: ${imageUrl ? imageUrl.slice(0, 60) : "none"}`);
 
   // Save to Supabase

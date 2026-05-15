@@ -14,6 +14,7 @@ const SEED_PROJECTS = [
 
 let projectIndex = 0;
 let projectList: string[] = [...SEED_PROJECTS];
+const logoMap = new Map<string, string>();
 
 export async function loadProjects(): Promise<void> {
   try {
@@ -22,11 +23,15 @@ export async function loadProjects(): Promise<void> {
 
     const solanaProjects = protocols
       .filter((p) => p.chains?.includes("Solana") && p.name)
-      .map((p) => p.name)
       .slice(0, 100);
 
-    if (solanaProjects.length > 0) {
-      projectList = [...new Set([...SEED_PROJECTS, ...solanaProjects])];
+    for (const p of solanaProjects) {
+      if (p.logo) logoMap.set(p.name, p.logo);
+    }
+
+    const names = solanaProjects.map((p: any) => p.name);
+    if (names.length > 0) {
+      projectList = [...new Set([...SEED_PROJECTS, ...names])];
       console.log(`[Projects] Loaded ${projectList.length} Solana projects from DeFiLlama`);
     }
   } catch {
@@ -38,6 +43,10 @@ export function getNextProject(): string {
   const project = projectList[projectIndex % projectList.length];
   projectIndex++;
   return project;
+}
+
+export function getProjectLogo(name: string): string {
+  return logoMap.get(name) ?? "";
 }
 
 export function getProjectCount(): number {

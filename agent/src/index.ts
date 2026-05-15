@@ -19,7 +19,7 @@ async function main() {
     console.log("[Boot] Discovering tools on SAP network...");
     await discoverTools(sapCtx);
   } catch (err) {
-    console.warn(`[Boot] SAP unavailable — on-chain memos skipped: ${(err as Error).message.slice(0, 60)}`);
+    console.warn(`[Boot] SAP unavailable — on-chain memos skipped: ${(err as Error).message.slice(0, 200)}`);
   }
 
   // 3. Load Solana project list

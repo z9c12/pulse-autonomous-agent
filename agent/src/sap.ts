@@ -14,10 +14,10 @@ const bsDecode: (s: string) => Uint8Array =
 
 const SAP_PROGRAM = new PublicKey("SAPpUhsWLJG1FfkGRcXagEDMrMsWGjbky7AyhGpFETZ");
 
-/** Derive the per-wallet pricing-menu PDA ([b"sap_menu", wallet]) */
-function getPricingMenuPDA(wallet: PublicKey): [PublicKey, number] {
+/** Derive the per-agent pricing-menu PDA ([b"sap_pricing", agentPDA]) */
+function getPricingMenuPDA(agentPDA: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("sap_menu"), wallet.toBuffer()],
+    [Buffer.from("sap_pricing"), agentPDA.toBuffer()],
     SAP_PROGRAM
   );
 }
@@ -83,7 +83,7 @@ export async function registerAgentOnSAP(ctx: SAPContext): Promise<void> {
 
   const [statsPDA] = Pdas.getAgentStatsPDA(agentPDA);
   const [globalPDA] = Pdas.getGlobalPDA();
-  const [pricingMenuPDA] = getPricingMenuPDA(ctx.keypair.publicKey);
+  const [pricingMenuPDA] = getPricingMenuPDA(agentPDA);
 
   // Build instruction data via Anchor (correct Borsh encoding)
   const draftTx: Transaction = await (client.program.methods as any)
